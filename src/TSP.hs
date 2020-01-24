@@ -151,9 +151,7 @@ start cities printer stopflag = do
 
 run :: Graph -> (String -> IO ()) -> (IORef Bool) -> IO ()
 run g printer stopflag = do
-    --putStrLn "Starting."
     seed <- (round . (* 1000)) <$> getPOSIXTime 
     genePool <- evalRandT (start g printer stopflag) (mkStdGen seed)
-    --putStrLn $ "best route: " ++ (show $ bestInGenePool genePool)
     return ()
 
