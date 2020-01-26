@@ -37,6 +37,7 @@ executable tsp-server
     , time
     , mmorph
     , sort
+    , monad-parallel
   other-modules:
     Shuffle
     , TSP
@@ -56,6 +57,7 @@ executable tsp
     , time
     , mmorph
     , sort
+    , monad-parallel
   other-modules:
     Shuffle
     , TSP

@@ -7,7 +7,7 @@ module Main where
 import Protolude
 import qualified Web.Scotty as Scotty
 import Data.IORef
-import Data.List
+import qualified Data.List as List
 import qualified Data.Text as Text
 import qualified Data.String as String
 import qualified Network.Wai.Middleware.Gzip as Scotty
@@ -16,7 +16,6 @@ import qualified Network.Wai.Middleware.RequestLogger as Wai
 import qualified Network.WebSockets as WS
 import qualified Network.Wai as Wai
 import qualified Network.Wai.Handler.Warp as Warp
-import Data.ByteString
 import qualified Data.Text.Encoding as TextEnc
 import Control.Exception
 import Control.Concurrent
@@ -24,13 +23,21 @@ import Control.Concurrent.Chan
 import qualified Data.HashMap.Strict as HashMap
 import qualified TSP as TSP
 import qualified TSPData as TSPData
+import qualified Control.Monad.Parallel as Par
 
 type Context = (SkipChan Text, IORef Bool, Text)
 type ContextMap = HashMap.HashMap Text Context
 
+data ClientCommand =
+    Comm_Connect Text
+    | Comm_Start Text
+    | Comm_Stop Text
+    | Comm_Remove Text
+    | Comm_Unknown
+
 main :: IO ()
 main = do
-    let port = 8787
+    let port = 8083
     let settings = Warp.setPort port Warp.defaultSettings
     (session' :: IORef ContextMap) <- newIORef HashMap.empty
     sapp <- scottyApp
@@ -64,23 +71,19 @@ wsapp session' pending = do
             disconnect = do
                 putText "disconnected (wsapp)"
 
-data ClientCommand =
-    Comm_Connect Text
-    | Comm_Start Text
-    | Comm_Stop Text
-    | Comm_Kill Text
-
 parseClientCommand :: Text -> ClientCommand
 parseClientCommand msg =
-    let opcode = Data.List.head $ Text.words msg
-        params = Data.List.tail $ Text.words msg in
+    let opcode = List.head $ Text.words msg
+        params = List.tail $ Text.words msg in
     oproute opcode params
-
     where
-        oproute opcode toks
-            | opcode == "$>connect" = Comm_Connect (toks !! 0)
-            | opcode == "$>start"   = Comm_Start   (toks !! 0)
-            | opcode == "$>stop"    = Comm_Stop    (toks !! 0)
+        oproute opcode (p1:[])
+            | opcode == "$>connect" = Comm_Connect p1
+            | opcode == "$>start"   = Comm_Start   p1
+            | opcode == "$>stop"    = Comm_Stop    p1
+            | opcode == "$>remove"  = Comm_Remove  p1
+            | otherwise             = Comm_Unknown
+        oproute opcode _ = Comm_Unknown
 
 routeClientCommand :: ClientCommand -> WS.Connection -> IORef ContextMap -> IO ()
 routeClientCommand (Comm_Connect to) conn session' = existingContextConnector conn to session'
@@ -92,11 +95,9 @@ routeClientCommand (Comm_Stop    to) conn session' = do
         Nothing -> do
             putText "No existing session to stop."
         Just (_, stopflag, _) -> writeIORef stopflag True
+routeClientCommand (Comm_Unknown) conn session' = do
+    WS.sendTextData conn ("#>unknown_command"::Text)
 
--- 
---  If session is Nothing, then there is nothing to connect to; tell the client
---  to create a new session.
---  Otherwise, connect to that session.
 existingContextConnector :: WS.Connection -> Text -> IORef ContextMap -> IO ()
 existingContextConnector conn sessionName session' = do
     sessionMap <- readIORef session'
@@ -108,7 +109,6 @@ existingContextConnector conn sessionName session' = do
             case stopflag of
                 True -> createNewSessionAndAttachClient conn sessionName session'
                 False -> sessionAttach conn sess
-            
             
 createNewSessionAndAttachClient :: WS.Connection -> Text -> IORef ContextMap -> IO ()
 createNewSessionAndAttachClient conn sessionName session' = do
@@ -130,9 +130,6 @@ createNewSessionAndAttachClient conn sessionName session' = do
     forkIO $ producer channel stopflag wdat
     sessionAttach conn (channel, stopflag, wdat)
 
---
---
--- note: Also launches a thread that reads k
 sessionAttach conn session@(channel, stopflag, waypointsData) = do
     WS.sendTextData conn $ "#>waypoints" <>  waypointsData
 
@@ -140,7 +137,7 @@ sessionAttach conn session@(channel, stopflag, waypointsData) = do
     forkIO $ whileRunListener conn session detach'
 
     (flip finally) (disconnect) $ foreverUntil (readIORef detach') $ do
-        threadDelay $ 1 * 500000
+        threadDelay $ 1 * 20000
         val <- getSkipChan channel
         WS.sendTextData conn val
 
@@ -155,17 +152,21 @@ foreverUntil condition f = condition >>= (\b -> on b)
     where on True = return ()
           on False = f >> foreverUntil condition f
 
-whileRunListener conn (_, stopflag, _) detach'= foreverUntil (readIORef detach') $ do
+whileRunListener conn (_, stopflag, _) detach' = foreverUntil (readIORef detach') $ do
     putText "whileRunListener: listening for detach..."
     (msg :: Text) <- WS.receiveData conn
     case msg of
-        "$>detach" ->
+        "$>detach" -> do
             putText "whileRunListener: got $>detach."
-            >> writeIORef detach' True
-        "$>stop" ->
+            writeIORef detach' True
+            WS.sendTextData conn ("#>ack"::Text)
+        "$>stop" -> do
             putText "whileRunListener: got $>stop."
-            >> mapM_ (flip writeIORef True) [detach', stopflag]
-        _ -> putText $ "whileRunListener: got unknown command " <> msg
+            mapM_ (flip writeIORef True) [detach', stopflag]
+            WS.sendTextData conn ("#>ack"::Text)
+        _ -> do
+            putText $ "whileRunListener: got unknown command " <> msg
+            WS.sendTextData conn ("#>unknown_command"::Text)
 
 producer :: SkipChan Text -> IORef Bool -> Text -> IO ()
 producer channel stopflag wdat = do
@@ -179,9 +180,9 @@ producer channel stopflag wdat = do
         printer :: SkipChan Text -> String.String -> IO ()
         printer channel str = putSkipChan channel $ Text.pack str
 
-
-
-
+--
+-- skip channel
+--
 data SkipChan a = SkipChan (MVar (a, [MVar ()])) (MVar ())
 
 newSkipChan :: IO (SkipChan a)
