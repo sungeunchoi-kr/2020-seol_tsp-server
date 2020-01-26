@@ -1,15 +1,15 @@
 module TSPData where
 
 import Control.Applicative
-import qualified Data.Map as Map
+import qualified Data.IntMap.Strict as Map
 
 type Position = [Float]
 
 type GrpahDist = Float
 type NodeLbl = Int
-type Graph = Map.Map NodeLbl Position
+type Graph = Map.IntMap Position
 type Gene = [NodeLbl]
-data TravState = TravState [NodeLbl] (Map.Map NodeLbl GrpahDist)
+data TravState = TravState [NodeLbl] (Map.IntMap GrpahDist)
 
 listCities :: Graph -> [NodeLbl]
 listCities = Map.keys
