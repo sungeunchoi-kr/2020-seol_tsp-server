@@ -2,17 +2,13 @@ module TSP where
 
 import Control.Monad.State
 import Control.Monad.Random
-import Control.Monad.Identity
 import qualified Data.IntMap.Strict as Map
 import qualified Data.Set as Set
-import Data.List
-import Data.Ord
-import Data.Sort
+import Data.List (sort, maximumBy, minimumBy)
+import Data.Ord (comparing)
 import Data.IORef
-import System.IO.Unsafe
-import System.Random
 import Data.Time.Clock.POSIX (getPOSIXTime)
-import Shuffle
+import Shuffle (shuffle)
 import Debug.Trace
 
 import TSPData

@@ -11,10 +11,9 @@ parse ["-h"] = usage   >> exit
 parse ["-v"] = version >> exit
 parse []     = usage   >> exit
 parse [s]    = do
-    dat <- readFile s
-    let g = TSPData.loadCitiesDataAsGraph $ lines dat
-
+    g <- TSPData.load <$> readFile s
     stopflag <- newIORef False
+
     TSP.run g putStrLn stopflag 
 
 usage   = putStrLn "Usage: [-vh] [file ..]"
